@@ -9,19 +9,27 @@ const LINKS = [
   { label: '@telebotsnowayrm', sub: 'Instagram', href: 'https://www.instagram.com/telebotsnowayrm/profilecard/?igsh=MTMwbTFjdG0wa2Nxcw==' },
 ];
 
-export function Footer({ onScrollUp }: { onScrollUp: () => void }) {
+export function Footer({
+  onScrollUp,
+  variant = 'overlay',
+}: {
+  onScrollUp: () => void;
+  variant?: 'overlay' | 'inline';
+}) {
   const footerRef = useRef<HTMLDivElement>(null);
   const touchY = useRef<number | null>(null);
+  const isInline = variant === 'inline';
 
   const onTouchStart = (e: React.TouchEvent) => { touchY.current = e.touches[0].clientY; };
   const onTouchEnd = (e: React.TouchEvent) => {
     if (touchY.current === null) return;
     const dy = touchY.current - e.changedTouches[0].clientY;
-    if (dy < -50) onScrollUp();
+    if (!isInline && dy < -50) onScrollUp();
     touchY.current = null;
   };
 
   useEffect(() => {
+    if (isInline) return;
     const el = footerRef.current;
     if (!el) return;
     const onWheel = (e: WheelEvent) => {
@@ -29,7 +37,7 @@ export function Footer({ onScrollUp }: { onScrollUp: () => void }) {
     };
     el.addEventListener('wheel', onWheel, { passive: true });
     return () => el.removeEventListener('wheel', onWheel);
-  }, [onScrollUp]);
+  }, [onScrollUp, isInline]);
 
   return (
     <div
@@ -38,8 +46,9 @@ export function Footer({ onScrollUp }: { onScrollUp: () => void }) {
       onTouchEnd={onTouchEnd}
       style={{
         width: '100%',
-        height: '100svh',
-        overflow: 'hidden',
+        minHeight: isInline ? '100svh' : undefined,
+        height: isInline ? 'auto' : '100svh',
+        overflow: isInline ? 'visible' : 'hidden',
         background: '#0c0c0c',
         color: '#fff',
         display: 'flex',
@@ -52,7 +61,7 @@ export function Footer({ onScrollUp }: { onScrollUp: () => void }) {
       <div
         onClick={onScrollUp}
         style={{
-          position: 'absolute',
+          position: isInline ? 'sticky' : 'absolute',
           top: 0,
           left: 0,
           right: 0,
@@ -65,6 +74,9 @@ export function Footer({ onScrollUp }: { onScrollUp: () => void }) {
           zIndex: 10,
           opacity: 0.28,
           transition: 'opacity 0.2s',
+          background: isInline ? 'rgba(12,12,12,0.92)' : 'transparent',
+          backdropFilter: isInline ? 'blur(8px)' : undefined,
+          WebkitBackdropFilter: isInline ? 'blur(8px)' : undefined,
         }}
         onMouseEnter={e => { (e.currentTarget as HTMLDivElement).style.opacity = '0.65'; }}
         onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.opacity = '0.28'; }}
@@ -72,7 +84,7 @@ export function Footer({ onScrollUp }: { onScrollUp: () => void }) {
         <svg width="12" height="12" viewBox="0 0 10 10" fill="none">
           <path d="M5 8V2M5 2L2 5M5 2L8 5" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
-        <span style={{ fontSize: 9, letterSpacing: '3px', fontWeight: 700 }}>SCROLL UP</span>
+        <span style={{ fontSize: 9, letterSpacing: '3px', fontWeight: 700 }}>{isInline ? 'BACK TO TOP' : 'SCROLL UP'}</span>
       </div>
 
       {/* Main content */}

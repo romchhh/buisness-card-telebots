@@ -1,253 +1,305 @@
 'use client';
 
+import type { CSSProperties } from 'react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { Footer } from './hero-slider/Footer';
 import { SLIDES } from './hero-slider/data';
 import { SlideLayer } from './hero-slider/SlideLayer';
+import { computeBlockFlyY, getScrollBlockHeightPx, getScrollFlyDistancePx } from './hero-slider/scrollBlockShift';
 import { NavBtn } from './hero-slider/ui';
 
-const DUR = 1200;
-const WHEEL_TRIGGER_DELTA = 72;
-const WHEEL_GESTURE_COOLDOWN = 220;
-const SWIPE_DISTANCE_TRIGGER = 56;
-const SWIPE_FAST_DISTANCE_TRIGGER = 30;
-const SWIPE_FAST_VELOCITY_TRIGGER = 0.45;
-
-function easeInOutQuart(t: number) {
-  return t < 0.5 ? 8 * t * t * t * t : 1 - Math.pow(-2 * t + 2, 4) / 2;
+function ScrollBlockNudge({
+  scrollRef,
+  blockIndex,
+  children,
+}: {
+  scrollRef: React.RefObject<HTMLDivElement | null>;
+  blockIndex: number;
+  children: React.ReactNode;
+}) {
+  const wrapRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const root = scrollRef.current;
+    const el = wrapRef.current;
+    if (!root || !el) return;
+    let rafId = 0;
+    const tick = () => {
+      const H = getScrollBlockHeightPx(root);
+      const st = root.scrollTop;
+      const mobileBoost =
+        typeof window !== 'undefined' && window.matchMedia('(max-width: 768px)').matches ? 1.5 : 1;
+      const flyBase = getScrollFlyDistancePx(H, mobileBoost);
+      const y = computeBlockFlyY(st, H, blockIndex, flyBase * 0.98);
+      el.style.transform = `translate3d(0, ${y}px, 0)`;
+      rafId = requestAnimationFrame(tick);
+    };
+    rafId = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(rafId);
+  }, [scrollRef, blockIndex]);
+  return (
+    <div
+      ref={wrapRef}
+      style={{ minHeight: '100%', height: '100%', display: 'flex', flexDirection: 'column', flex: 1 }}
+    >
+      {children}
+    </div>
+  );
 }
 
-function easeOutExpo(t: number) {
-  return t === 1 ? 1 : 1 - Math.pow(2, -10 * t);
-}
+const TOTAL_BLOCKS = SLIDES.length + 1;
+
+const headerBtnStyle: CSSProperties = {
+  color: '#fff',
+  fontSize: 18,
+  fontWeight: 900,
+  fontFamily: "'Arial Black', sans-serif",
+  letterSpacing: '-0.5px',
+  textShadow: '0 2px 16px rgba(0,0,0,0.8)',
+  background: 'transparent',
+  border: 'none',
+  padding: 0,
+  cursor: 'pointer',
+};
+
+const telegramBtnStyle: CSSProperties = {
+  opacity: 0.9,
+  lineHeight: 0,
+  background: 'transparent',
+  border: 'none',
+  padding: 0,
+  cursor: 'pointer',
+};
 
 export default function HeroSlider() {
-  const [current, setCurrent] = useState(0);
-  const [next, setNext] = useState<number | null>(null);
-  const [progress, setProgress] = useState(0);
-  const [dir, setDir] = useState(1);
-  const [showFooter, setShowFooter] = useState(false);
-
-  const lock = useRef(false);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const touchY = useRef<number | null>(null);
-  const touchStartAt = useRef<number>(0);
-  const wheelAccum = useRef(0);
-  const wheelDir = useRef(0);
-  const wheelCooldownUntil = useRef(0);
+  const [activeIndex, setActiveIndex] = useState(0);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const sectionRefs = useRef<Array<HTMLElement | null>>([]);
+  const footerSectionRef = useRef<HTMLElement | null>(null);
   const mouse = useRef({ x: 0, y: 0 });
-  const animRaf = useRef<number | null>(null);
-  const animStart = useRef<number | null>(null);
+
+  const setSectionRef = (i: number) => (el: HTMLElement | null) => {
+    sectionRefs.current[i] = el;
+  };
 
   useEffect(() => {
     const onMove = (e: MouseEvent) => {
-      mouse.current = { x: (e.clientX / window.innerWidth - 0.5) * 2, y: (e.clientY / window.innerHeight - 0.5) * 2 };
+      mouse.current = {
+        x: (e.clientX / window.innerWidth - 0.5) * 2,
+        y: (e.clientY / window.innerHeight - 0.5) * 2,
+      };
     };
     window.addEventListener('mousemove', onMove);
     return () => window.removeEventListener('mousemove', onMove);
   }, []);
 
-  const goTo = useCallback((rawIdx: number, rawDir?: number) => {
-    if (lock.current) return;
-    if (rawDir === 1 && rawIdx >= SLIDES.length) return setShowFooter(true);
-    if (rawDir === -1 && showFooter) return setShowFooter(false);
-    if (rawIdx < 0 || rawIdx >= SLIDES.length) return;
-    if (rawIdx === current && !showFooter) return;
+  const scrollToBlock = useCallback((idx: number) => {
+    const root = scrollRef.current;
+    if (!root) return;
+    if (idx < 0) return;
+    if (idx < SLIDES.length) {
+      sectionRefs.current[idx]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } else {
+      footerSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }, []);
 
-    const d = rawDir !== undefined ? rawDir : (rawIdx > current ? 1 : -1);
-    lock.current = true;
-    setDir(d);
-    setNext(rawIdx);
-    setProgress(0);
-    animStart.current = null;
-
-    const tick = (ts: number) => {
-      if (!animStart.current) animStart.current = ts;
-      const raw = Math.min((ts - animStart.current) / DUR, 1);
-      setProgress(easeInOutQuart(raw));
-      if (raw < 1) {
-        animRaf.current = requestAnimationFrame(tick);
-      } else {
-        setCurrent(rawIdx);
-        setNext(null);
-        setProgress(0);
-        lock.current = false;
-      }
-    };
-    animRaf.current = requestAnimationFrame(tick);
-  }, [current, showFooter]);
-
-  useEffect(() => () => {
-    if (animRaf.current) cancelAnimationFrame(animRaf.current);
+  const scrollTop = useCallback(() => {
+    scrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
   }, []);
 
   useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    const onWheel = (e: WheelEvent) => {
-      e.preventDefault();
-      if (lock.current) return;
-
-      const now = performance.now();
-      const absDelta = Math.abs(e.deltaY);
-      if (absDelta < 0.5) return;
-
-      const direction = e.deltaY > 0 ? 1 : -1;
-      if (wheelDir.current !== direction) {
-        wheelAccum.current = 0;
-        wheelDir.current = direction;
+    const root = scrollRef.current;
+    if (!root) return;
+    const onScroll = () => {
+      const { scrollTop: st, clientHeight, scrollHeight } = root;
+      if (clientHeight < 1) return;
+      const nearBottom = st + clientHeight >= scrollHeight - 40;
+      if (nearBottom) {
+        setActiveIndex(SLIDES.length);
+        return;
       }
-      wheelAccum.current += e.deltaY;
-
-      if (now < wheelCooldownUntil.current) return;
-      if (Math.abs(wheelAccum.current) < WHEEL_TRIGGER_DELTA) return;
-
-      wheelCooldownUntil.current = now + WHEEL_GESTURE_COOLDOWN;
-      wheelAccum.current = 0;
-      goTo(current + direction, direction);
+      const pageH = getScrollBlockHeightPx(root);
+      const idx = Math.round((st + pageH * 0.45) / pageH);
+      setActiveIndex(Math.min(SLIDES.length - 1, Math.max(0, idx)));
     };
-    el.addEventListener('wheel', onWheel, { passive: false });
-    return () => {
-      el.removeEventListener('wheel', onWheel);
-    };
-  }, [current, goTo]);
+    onScroll();
+    root.addEventListener('scroll', onScroll, { passive: true });
+    return () => root.removeEventListener('scroll', onScroll);
+  }, []);
 
-  const onTouchStart = (e: React.TouchEvent) => {
-    touchY.current = e.touches[0].clientY;
-    touchStartAt.current = performance.now();
+  const progressPct =
+    activeIndex >= SLIDES.length
+      ? 100
+      : (activeIndex / (SLIDES.length - 1)) * 100;
+
+  const navDown = () => scrollToBlock(Math.min(activeIndex + 1, SLIDES.length));
+  const navUp = () => scrollToBlock(Math.max(activeIndex - 1, 0));
+
+  const staticSlideProps = {
+    translateY: 0,
+    bgTranslateY: 0,
+    blur: 0,
+    scale: 1,
+    opacity: 1,
+    transitionProgress: 0,
+    transitionDir: 1,
+    isExiting: true,
+    animateText: false,
+    textVisible: true,
+    carPlanetHandoff: null,
   };
-  const onTouchEnd = (e: React.TouchEvent) => {
-    if (touchY.current === null) return;
-
-    const dy = touchY.current - e.changedTouches[0].clientY;
-    const dt = Math.max(performance.now() - touchStartAt.current, 16);
-    const velocity = Math.abs(dy) / dt;
-    const isLongSwipe = Math.abs(dy) > SWIPE_DISTANCE_TRIGGER;
-    const isFastSwipe =
-      Math.abs(dy) > SWIPE_FAST_DISTANCE_TRIGGER && velocity > SWIPE_FAST_VELOCITY_TRIGGER;
-
-    if (isLongSwipe || isFastSwipe) {
-      goTo(current + (dy > 0 ? 1 : -1), dy > 0 ? 1 : -1);
-    }
-
-    touchY.current = null;
-  };
-
-  const isTransitioning = next !== null;
-  // Wrapper slides: current exits up/down, next enters from opposite
-  const currentExitY = dir === 1 ? -(progress * 44) : (progress * 44);
-  const nextEnterY = dir === 1 ? (1 - progress) * 44 : -(1 - progress) * 44;
-  // Background parallax at slower speed for depth
-  const currentBgY = dir === 1 ? -(progress * 18) : (progress * 18);
-  const nextBgY = dir === 1 ? (1 - progress) * 18 : -(1 - progress) * 18;
-  // Overlapping opacity: current exits by 65% mark, next starts at 20%
-  const currentOpacity = isTransitioning ? Math.max(0, 1 - progress * 1.55) : 1;
-  const nextOpacity = isTransitioning ? easeOutExpo(Math.max(0, (progress - 0.2) / 0.8)) : 1;
-  const midBlur = Math.sin(progress * Math.PI);
-  const currentBlur = isTransitioning ? midBlur * 5 : 0;
-  const nextBlur = isTransitioning ? Math.max(0, (0.48 - progress) / 0.48) * 2.2 : 0;
-  // Scale: current shrinks, next grows into frame
-  const currentScale = isTransitioning ? 1 - progress * 0.032 : 1;
-  const nextScale = isTransitioning ? 0.968 + progress * 0.032 : 1;
 
   return (
     <>
-      <div ref={containerRef} onTouchStart={onTouchStart} onTouchEnd={onTouchEnd} style={{ position: 'relative', width: '100%', height: '100svh', overflow: 'hidden', background: '#000' }}>
-        <button type="button" onClick={() => { goTo(0, -1); setShowFooter(false); }} aria-label="Back to top" style={{ position: 'absolute', top: 28, left: 36, zIndex: 200, color: '#fff', fontSize: 18, fontWeight: 900, fontFamily: "'Arial Black', sans-serif", letterSpacing: '-0.5px', textShadow: '0 2px 16px rgba(0,0,0,0.8)', background: 'transparent', border: 'none', padding: 0, cursor: 'pointer', mixBlendMode: 'normal' }}>telebots.</button>
-        <button
-          type="button"
-          onClick={() => setShowFooter(true)}
-          aria-label="Open contacts"
+      <div
+        className="telebots-onepage"
+        style={{ position: 'relative', width: '100%', height: '100svh', background: '#000', overflow: 'hidden' }}
+      >
+        <div
           style={{
             position: 'absolute',
-            top: 26,
-            right: 36,
-            zIndex: 200,
-            opacity: 0.9,
-            lineHeight: 0,
-            background: 'transparent',
-            border: 'none',
-            padding: 0,
-            cursor: 'pointer',
+            top: 0,
+            left: 0,
+            right: 0,
+            zIndex: 300,
+            display: 'flex',
+            alignItems: 'flex-start',
+            justifyContent: 'space-between',
+            padding: '26px 36px 0',
+            pointerEvents: 'none',
           }}
         >
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="white">
-            <path d="M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0a12 12 0 0 0-.056 0zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 0 1 .171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.48.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.83-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635z" />
-          </svg>
-        </button>
-
-        {/* 
-          FIX: текст ревілиться двічі бо `textVisible` на поточному слайді
-          переключався з true→false→true під час transition через `!isTransitioning`.
-          
-          Рішення: поточний слайд ЗАВЖДИ показує текст (textVisible=true завжди),
-          але НІКОЛИ не анімує його (animateText=false завжди).
-          Тільки наступний слайд анімує появу тексту після 62% прогресу.
-        */}
-        <SlideLayer
-          slide={SLIDES[current]}
-          translateY={currentExitY}
-          bgTranslateY={currentBgY}
-          blur={currentBlur}
-          scale={currentScale}
-          opacity={currentOpacity}
-          zIndex={10}
-          mouse={mouse}
-          animateText={false}
-          textVisible={true}
-          transitionProgress={progress}
-          transitionDir={dir}
-          isExiting={true}
-        />
-        {isTransitioning && next !== null && (
-          <SlideLayer
-            slide={SLIDES[next]}
-            translateY={nextEnterY}
-            bgTranslateY={nextBgY}
-            blur={nextBlur}
-            scale={nextScale}
-            opacity={nextOpacity}
-            zIndex={20}
-            mouse={mouse}
-            animateText={progress > 0.58}
-            textVisible={progress > 0.58}
-            transitionProgress={progress}
-            transitionDir={dir}
-            isExiting={false}
-          />
-        )}
-        {isTransitioning && <div style={{ position: 'absolute', inset: 0, zIndex: 15, pointerEvents: 'none', background: `linear-gradient(to ${dir === 1 ? 'bottom' : 'top'}, rgba(0,0,0,0) 0%, rgba(0,0,0,${midBlur * 0.7}) 50%, rgba(0,0,0,0) 100%)` }} />}
-
-        <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 2, zIndex: 300, background: 'rgba(255,255,255,0.06)' }}>
-          <div style={{ height: '100%', width: `${(current / (SLIDES.length - 1)) * 100}%`, background: 'rgba(255,255,255,0.35)', transition: 'width 0.9s cubic-bezier(0.22,1,0.36,1)' }} />
+          <button type="button" onClick={scrollTop} aria-label="Back to top" style={{ pointerEvents: 'auto', ...headerBtnStyle }}>
+            telebots.
+          </button>
+          <button type="button" onClick={() => scrollToBlock(SLIDES.length)} aria-label="Contacts" style={{ pointerEvents: 'auto', ...telegramBtnStyle }}>
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="white">
+              <path d="M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0a12 12 0 0 0-.056 0zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 0 1 .171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.48.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.83-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635z" />
+            </svg>
+          </button>
         </div>
 
-        <div style={{ position: 'absolute', left: 36, bottom: 36, zIndex: 200, display: 'flex', flexDirection: 'column', gap: 10 }}>
-          {SLIDES.map((_, i) => (
-            <button key={i} onClick={() => goTo(i)} aria-label={`Slide ${i + 1}`} style={{ width: 6, height: i === current ? 20 : 6, borderRadius: 4, border: 'none', padding: 0, cursor: 'pointer', background: i === current ? '#fff' : 'rgba(255,255,255,0.32)', transition: 'all 0.4s cubic-bezier(0.22,1,0.36,1)', boxShadow: i === current ? '0 0 10px rgba(255,255,255,0.4)' : 'none' }} />
+        <div
+          ref={scrollRef}
+          className="telebots-page-scroll"
+          style={{
+            height: '100%',
+            overflowX: 'hidden',
+            overflowY: 'auto',
+            WebkitOverflowScrolling: 'touch',
+            touchAction: 'pan-y',
+          }}
+        >
+          {SLIDES.map((slide, i) => (
+            <section
+              key={slide.id}
+              ref={setSectionRef(i)}
+              className="telebots-block"
+              style={{
+                position: 'relative',
+                scrollSnapAlign: 'start',
+                scrollSnapStop: 'always',
+                background: '#000',
+              }}
+            >
+              <SlideLayer
+                slide={slide}
+                zIndex={1}
+                mouse={mouse}
+                scrollMode
+                scrollRootRef={scrollRef}
+                blockIndex={i}
+                {...staticSlideProps}
+              />
+            </section>
+          ))}
+
+          <section
+            ref={footerSectionRef}
+            className="telebots-block telebots-block-footer"
+            style={{
+              scrollSnapAlign: 'start',
+              scrollSnapStop: 'always',
+              background: '#0c0c0c',
+            }}
+          >
+            <ScrollBlockNudge scrollRef={scrollRef} blockIndex={SLIDES.length}>
+              <Footer variant="inline" onScrollUp={scrollTop} />
+            </ScrollBlockNudge>
+          </section>
+        </div>
+
+        <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 2, zIndex: 280, background: 'rgba(255,255,255,0.06)', pointerEvents: 'none' }}>
+          <div style={{ height: '100%', width: `${progressPct}%`, background: 'rgba(255,255,255,0.35)', transition: 'width 0.45s cubic-bezier(0.22,1,0.36,1)' }} />
+        </div>
+
+        <div style={{ position: 'absolute', left: 36, bottom: 36, zIndex: 280, display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {Array.from({ length: TOTAL_BLOCKS }, (_, i) => (
+            <button
+              key={i}
+              type="button"
+              onClick={() => scrollToBlock(i)}
+              aria-label={i < SLIDES.length ? `Block ${i + 1}` : 'Contacts'}
+              style={{
+                width: 6,
+                height: i === activeIndex ? 20 : 6,
+                borderRadius: 4,
+                border: 'none',
+                padding: 0,
+                cursor: 'pointer',
+                background: i === activeIndex ? '#fff' : 'rgba(255,255,255,0.32)',
+                transition: 'all 0.35s cubic-bezier(0.22,1,0.36,1)',
+                boxShadow: i === activeIndex ? '0 0 10px rgba(255,255,255,0.35)' : 'none',
+              }}
+            />
           ))}
         </div>
 
-        <div className="slide-counter" style={{ position: 'absolute', bottom: 38, left: '50%', transform: 'translateX(-50%)', zIndex: 200, display: 'flex', alignItems: 'center', gap: 6 }}>
-          <span style={{ fontSize: 13, fontWeight: 900, color: '#fff', fontFamily: "'Arial Black', sans-serif", opacity: 0.9 }}>{String(current + 1).padStart(2, '0')}</span>
+        <div className="slide-counter" style={{ position: 'absolute', bottom: 38, left: '50%', transform: 'translateX(-50%)', zIndex: 280, display: 'flex', alignItems: 'center', gap: 6, pointerEvents: 'none' }}>
+          <span style={{ fontSize: 13, fontWeight: 900, color: '#fff', fontFamily: "'Arial Black', sans-serif", opacity: 0.9 }}>
+            {String(activeIndex + 1).padStart(2, '0')}
+          </span>
           <span style={{ width: 28, height: 1, background: 'rgba(255,255,255,0.28)' }} />
-          <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.38)', fontFamily: "'Arial Black', sans-serif" }}>{String(SLIDES.length).padStart(2, '0')}</span>
+          <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.38)', fontFamily: "'Arial Black', sans-serif" }}>
+            {String(TOTAL_BLOCKS).padStart(2, '0')}
+          </span>
         </div>
 
-        <div style={{ position: 'absolute', bottom: 28, right: 36, zIndex: 200, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
-          <NavBtn onClick={() => goTo(current - 1, -1)} up />
+        <div style={{ position: 'absolute', bottom: 28, right: 36, zIndex: 280, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+          <NavBtn onClick={navUp} up />
           <div style={{ width: 1, height: 18, background: 'rgba(255,255,255,0.2)' }} />
-          <NavBtn onClick={() => goTo(current + 1, 1)} />
+          <NavBtn onClick={navDown} />
         </div>
-      </div>
-
-      <div style={{ position: 'fixed', top: 0, left: 0, right: 0, height: '100svh', zIndex: showFooter ? 500 : -1, transform: showFooter ? 'translateY(0)' : 'translateY(100%)', transition: 'transform 1.1s cubic-bezier(0.22,1,0.36,1)', background: '#111', overflow: 'hidden' }}>
-        <Footer onScrollUp={() => setShowFooter(false)} />
       </div>
 
       <style>{`
-        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+        .telebots-page-scroll {
+          scroll-snap-type: y mandatory;
+        }
+        .telebots-block {
+          height: 100svh;
+          min-height: 100svh;
+          max-height: 100svh;
+          overflow: hidden;
+          isolation: isolate;
+        }
+        .telebots-block::before {
+          content: '';
+          position: absolute;
+          inset: 0;
+          z-index: 50;
+          pointer-events: none;
+          box-shadow:
+            inset 0 64px 90px -36px rgba(0,0,0,0.42),
+            inset 0 -64px 90px -36px rgba(0,0,0,0.42);
+        }
+        .telebots-block-footer {
+          overflow-y: auto;
+          overflow-x: hidden;
+          -webkit-overflow-scrolling: touch;
+        }
+        *, *::before, *::after { box-sizing: border-box; }
         @keyframes fadeUp { from { opacity: 0; transform: translateY(28px); } to { opacity: 1; transform: translateY(0); } }
         @media (max-width: 768px) {
           .sc { flex-direction: column !important; justify-content: flex-end !important; padding: 92px 22px 42px !important; gap: 10px !important; align-items: center !important; text-align: center !important; }
@@ -255,40 +307,27 @@ export default function HeroSlider() {
           .sh { font-size: clamp(36px, 11.5vw, 56px) !important; letter-spacing: -1px !important; line-height: 0.9 !important; text-align: center !important; }
           .sh-mobile-lower { margin-top: 130px !important; }
           .sr { width: 100% !important; text-align: center !important; max-width: 340px !important; margin-top: 6px !important; }
-          .sr-mobile-raise {
-            margin-top: -32px !important;
-            position: relative !important;
-            top: -34px !important;
-          }
-          .sr-mobile-raise-strong {
-            top: -56px !important;
-          }
+          .sr-mobile-raise { margin-top: -32px !important; position: relative !important; top: -34px !important; }
+          .sr-mobile-raise-strong { top: -56px !important; }
           .sr p { font-size: 13px !important; line-height: 1.62 !important; }
-          .mobile-layer { left: 50% !important; top: 8% !important; right: auto !important; bottom: auto !important; width: 92vw !important; max-width: 420px !important; transform: translateX(-50%) !important; }
+          .mobile-layer { left: 50% !important; top: 8% !important; right: auto !important; bottom: auto !important; width: 92vw !important; max-width: 420px !important; transform: translateX(-50%); }
           .mobile-planet { width: 76vw !important; max-width: 300px !important; top: 4% !important; }
           .mobile-astronaut { width: 58vw !important; max-width: 220px !important; top: 10% !important; }
-          .fwrap { grid-template-columns: 1fr !important; gap: 12px !important; overflow-y: auto !important; padding-right: 2px !important; }
           .slide-counter { bottom: 18px !important; }
+          .telebots-onepage > div:first-of-type { padding: 22px 22px 0 !important; }
         }
         @media (max-width: 480px) {
           .sc { padding: 80px 18px 32px !important; }
           .sc-ufo { padding-top: 340px !important; }
           .sh { font-size: clamp(30px, 12.5vw, 48px) !important; }
           .sh-mobile-lower { margin-top: 155px !important; }
-          .sr-mobile-raise {
-            margin-top: -22px !important;
-            position: relative !important;
-            top: -26px !important;
-          }
-          .sr-mobile-raise-strong {
-            top: -42px !important;
-          }
+          .sr-mobile-raise { margin-top: -22px !important; position: relative !important; top: -26px !important; }
+          .sr-mobile-raise-strong { top: -42px !important; }
           .mobile-layer { top: 6% !important; max-width: 360px !important; }
           .mobile-planet { width: 70vw !important; max-width: 250px !important; top: 8% !important; }
           .mobile-astronaut { width: 52vw !important; max-width: 180px !important; top: 14% !important; }
           .slide-counter { bottom: 12px !important; }
         }
-
         @media (min-width: 769px) {
           .sc-ufo {
             justify-content: flex-start !important;
@@ -298,20 +337,12 @@ export default function HeroSlider() {
             padding-top: 260px !important;
           }
           .sr-contrast-bg {
-            background: radial-gradient(
-              ellipse at center,
-              rgba(0,0,0,0.32) 0%,
-              rgba(0,0,0,0.2) 45%,
-              rgba(0,0,0,0.08) 72%,
-              rgba(0,0,0,0) 100%
-            );
+            background: radial-gradient(ellipse at center, rgba(0,0,0,0.32) 0%, rgba(0,0,0,0.2) 45%, rgba(0,0,0,0.08) 72%, rgba(0,0,0,0) 100%);
             backdrop-filter: blur(6px);
             -webkit-backdrop-filter: blur(6px);
             padding: 18px 24px;
             border-radius: 999px;
-            box-shadow:
-              0 0 48px 28px rgba(0,0,0,0.24),
-              0 0 96px 52px rgba(0,0,0,0.14);
+            box-shadow: 0 0 48px 28px rgba(0,0,0,0.24), 0 0 96px 52px rgba(0,0,0,0.14);
           }
         }
       `}</style>

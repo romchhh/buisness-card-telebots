@@ -7,10 +7,19 @@ import { SLIDES } from './hero-slider/data';
 import { SlideLayer } from './hero-slider/SlideLayer';
 import { NavBtn } from './hero-slider/ui';
 
-const DUR = 1400;
+const DUR = 1200;
+const WHEEL_TRIGGER_DELTA = 72;
+const WHEEL_GESTURE_COOLDOWN = 220;
+const SWIPE_DISTANCE_TRIGGER = 56;
+const SWIPE_FAST_DISTANCE_TRIGGER = 30;
+const SWIPE_FAST_VELOCITY_TRIGGER = 0.45;
 
 function easeInOutQuart(t: number) {
   return t < 0.5 ? 8 * t * t * t * t : 1 - Math.pow(-2 * t + 2, 4) / 2;
+}
+
+function easeOutExpo(t: number) {
+  return t === 1 ? 1 : 1 - Math.pow(2, -10 * t);
 }
 
 export default function HeroSlider() {
@@ -23,6 +32,10 @@ export default function HeroSlider() {
   const lock = useRef(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const touchY = useRef<number | null>(null);
+  const touchStartAt = useRef<number>(0);
+  const wheelAccum = useRef(0);
+  const wheelDir = useRef(0);
+  const wheelCooldownUntil = useRef(0);
   const mouse = useRef({ x: 0, y: 0 });
   const animRaf = useRef<number | null>(null);
   const animStart = useRef<number | null>(null);
@@ -65,42 +78,78 @@ export default function HeroSlider() {
     animRaf.current = requestAnimationFrame(tick);
   }, [current, showFooter]);
 
+  useEffect(() => () => {
+    if (animRaf.current) cancelAnimationFrame(animRaf.current);
+  }, []);
+
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
-    let lastTime = 0;
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
-      const now = Date.now();
-      if (now - lastTime < DUR + 100) return;
-      lastTime = now;
-      const d = e.deltaY > 0 ? 1 : -1;
-      goTo(current + d, d);
+      if (lock.current) return;
+
+      const now = performance.now();
+      const absDelta = Math.abs(e.deltaY);
+      if (absDelta < 0.5) return;
+
+      const direction = e.deltaY > 0 ? 1 : -1;
+      if (wheelDir.current !== direction) {
+        wheelAccum.current = 0;
+        wheelDir.current = direction;
+      }
+      wheelAccum.current += e.deltaY;
+
+      if (now < wheelCooldownUntil.current) return;
+      if (Math.abs(wheelAccum.current) < WHEEL_TRIGGER_DELTA) return;
+
+      wheelCooldownUntil.current = now + WHEEL_GESTURE_COOLDOWN;
+      wheelAccum.current = 0;
+      goTo(current + direction, direction);
     };
     el.addEventListener('wheel', onWheel, { passive: false });
-    return () => el.removeEventListener('wheel', onWheel);
+    return () => {
+      el.removeEventListener('wheel', onWheel);
+    };
   }, [current, goTo]);
 
-  const onTouchStart = (e: React.TouchEvent) => { touchY.current = e.touches[0].clientY; };
+  const onTouchStart = (e: React.TouchEvent) => {
+    touchY.current = e.touches[0].clientY;
+    touchStartAt.current = performance.now();
+  };
   const onTouchEnd = (e: React.TouchEvent) => {
     if (touchY.current === null) return;
+
     const dy = touchY.current - e.changedTouches[0].clientY;
-    if (Math.abs(dy) > 40) goTo(current + (dy > 0 ? 1 : -1), dy > 0 ? 1 : -1);
+    const dt = Math.max(performance.now() - touchStartAt.current, 16);
+    const velocity = Math.abs(dy) / dt;
+    const isLongSwipe = Math.abs(dy) > SWIPE_DISTANCE_TRIGGER;
+    const isFastSwipe =
+      Math.abs(dy) > SWIPE_FAST_DISTANCE_TRIGGER && velocity > SWIPE_FAST_VELOCITY_TRIGGER;
+
+    if (isLongSwipe || isFastSwipe) {
+      goTo(current + (dy > 0 ? 1 : -1), dy > 0 ? 1 : -1);
+    }
+
     touchY.current = null;
   };
 
   const isTransitioning = next !== null;
-  const currentExitY = dir === 1 ? -(progress * 38) : (progress * 38);
-  const nextEnterY = dir === 1 ? (1 - progress) * 38 : -(1 - progress) * 38;
-  const currentBgY = dir === 1 ? -(progress * 12) : (progress * 12);
-  const nextBgY = dir === 1 ? (1 - progress) * 12 : -(1 - progress) * 12;
-  const currentOpacity = isTransitioning ? 1 - easeInOutQuart(progress) : 1;
-  const nextOpacity = isTransitioning ? easeInOutQuart(progress) : 1;
+  // Wrapper slides: current exits up/down, next enters from opposite
+  const currentExitY = dir === 1 ? -(progress * 44) : (progress * 44);
+  const nextEnterY = dir === 1 ? (1 - progress) * 44 : -(1 - progress) * 44;
+  // Background parallax at slower speed for depth
+  const currentBgY = dir === 1 ? -(progress * 18) : (progress * 18);
+  const nextBgY = dir === 1 ? (1 - progress) * 18 : -(1 - progress) * 18;
+  // Overlapping opacity: current exits by 65% mark, next starts at 20%
+  const currentOpacity = isTransitioning ? Math.max(0, 1 - progress * 1.55) : 1;
+  const nextOpacity = isTransitioning ? easeOutExpo(Math.max(0, (progress - 0.2) / 0.8)) : 1;
   const midBlur = Math.sin(progress * Math.PI);
-  const currentBlur = isTransitioning ? midBlur * 2.5 : 0;
-  const nextBlur = isTransitioning ? (1 - progress) * 2 : 0;
-  const currentScale = isTransitioning ? 1 - progress * 0.01 : 1;
-  const nextScale = isTransitioning ? 0.99 + progress * 0.01 : 1;
+  const currentBlur = isTransitioning ? midBlur * 5 : 0;
+  const nextBlur = isTransitioning ? Math.max(0, (0.48 - progress) / 0.48) * 2.2 : 0;
+  // Scale: current shrinks, next grows into frame
+  const currentScale = isTransitioning ? 1 - progress * 0.032 : 1;
+  const nextScale = isTransitioning ? 0.968 + progress * 0.032 : 1;
 
   return (
     <>
@@ -147,6 +196,9 @@ export default function HeroSlider() {
           mouse={mouse}
           animateText={false}
           textVisible={true}
+          transitionProgress={progress}
+          transitionDir={dir}
+          isExiting={true}
         />
         {isTransitioning && next !== null && (
           <SlideLayer
@@ -158,11 +210,14 @@ export default function HeroSlider() {
             opacity={nextOpacity}
             zIndex={20}
             mouse={mouse}
-            animateText={progress > 0.62}
-            textVisible={progress > 0.62}
+            animateText={progress > 0.58}
+            textVisible={progress > 0.58}
+            transitionProgress={progress}
+            transitionDir={dir}
+            isExiting={false}
           />
         )}
-        {isTransitioning && <div style={{ position: 'absolute', inset: 0, zIndex: 15, pointerEvents: 'none', background: `linear-gradient(to ${dir === 1 ? 'bottom' : 'top'}, rgba(0,0,0,0) 0%, rgba(0,0,0,${midBlur * 0.55}) 50%, rgba(0,0,0,0) 100%)` }} />}
+        {isTransitioning && <div style={{ position: 'absolute', inset: 0, zIndex: 15, pointerEvents: 'none', background: `linear-gradient(to ${dir === 1 ? 'bottom' : 'top'}, rgba(0,0,0,0) 0%, rgba(0,0,0,${midBlur * 0.7}) 50%, rgba(0,0,0,0) 100%)` }} />}
 
         <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 2, zIndex: 300, background: 'rgba(255,255,255,0.06)' }}>
           <div style={{ height: '100%', width: `${(current / (SLIDES.length - 1)) * 100}%`, background: 'rgba(255,255,255,0.35)', transition: 'width 0.9s cubic-bezier(0.22,1,0.36,1)' }} />

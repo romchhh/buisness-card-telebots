@@ -311,6 +311,7 @@ export default function HeroSlider() {
           .sr-mobile-raise-strong { top: -56px !important; }
           .sr p { font-size: 13px !important; line-height: 1.62 !important; }
           .mobile-layer { left: 50% !important; top: 8% !important; right: auto !important; bottom: auto !important; width: 92vw !important; max-width: 420px !important; transform: translateX(-50%); }
+          .mobile-layer.mobile-hero-s1 { top: 50% !important; transform: translate(-50%, -50%) !important; }
           .mobile-planet { width: 76vw !important; max-width: 300px !important; top: 4% !important; }
           .mobile-astronaut { width: 58vw !important; max-width: 220px !important; top: 10% !important; }
           .slide-counter { bottom: 18px !important; }

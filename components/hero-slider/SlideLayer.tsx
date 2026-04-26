@@ -174,7 +174,12 @@ export function SlideLayer({
           }
         }
 
-        const base = l.originTransform || '';
+        const narrow =
+          typeof window !== 'undefined' && window.matchMedia('(max-width: 768px)').matches;
+        let base = l.originTransform || '';
+        if (narrow && slide.id === 's1' && j === 0) {
+          base = '';
+        }
         const tyPx = mouseTy + scrollY + handoffY + flyLayer;
         el.style.transform = base
           ? `${base} translate3d(${mouseTx}px,${tyPx}px,0)`
@@ -247,6 +252,7 @@ export function SlideLayer({
             className={[
               'layer-item',
               j === 0 ? 'mobile-layer' : '',
+              slide.id === 's1' && j === 0 ? 'mobile-hero-s1' : '',
               l.src.includes('planet.png') ? 'mobile-planet' : '',
               l.src.includes('astronaut11.png') ? 'mobile-astronaut' : '',
             ].filter(Boolean).join(' ')}
